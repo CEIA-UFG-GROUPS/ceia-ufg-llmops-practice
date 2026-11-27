@@ -75,7 +75,20 @@ def ingest() -> int:
     # b) Gere os vetores: embedder.embed(textos) devolve um gerador de arrays numpy
     # c) Faça upsert de um PointStruct por chunk, com payload {"texto": ..., "fonte": ...}
     #    Dica: id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{fonte}-{i}")) deixa o ingest idempotente
-    raise NotImplementedError("TODO 1: implemente aqui")
+    if not qdrant.collection_exists(COLLECTION):
+        qdrant.create_collection(
+            COLLECTION, vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+        )
+    vetores = embedder.embed(textos)
+    pontos = [
+        PointStruct(
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{fonte}-{i}")),
+            vector=vetor.tolist(),
+            payload={"texto": texto, "fonte": fonte},
+        )
+        for i, (texto, fonte, vetor) in enumerate(zip(textos, fontes, vetores))
+    ]
+    qdrant.upsert(COLLECTION, points=pontos)
     # -----------------------------------------------------------------------
     return len(textos)
 
@@ -86,7 +99,9 @@ def search(pergunta: str, k: int = 4) -> list[dict]:
     # a) Gere o vetor da pergunta (mesmo embedder do ingest!)
     # b) qdrant.query_points(COLLECTION, query=vetor, limit=k).points
     # c) Devolva [{"texto": ..., "fonte": ..., "score": ...}, ...]
-    raise NotImplementedError("TODO 2: implemente aqui")
+    vetor = next(embedder.embed([pergunta])).tolist()
+    pontos = qdrant.query_points(COLLECTION, query=vetor, limit=k).points
+    return [{**p.payload, "score": round(p.score, 3)} for p in pontos]
     # -----------------------------------------------------------------------
 
 
@@ -109,5 +124,14 @@ def ask(pergunta: str) -> dict:
     # b) Chame llm().chat.completions.create(model=os.getenv("LLM_MODEL"), messages=[...],
     #    max_tokens=400) com o PROMPT preenchido
     # c) Devolva {"resposta": ..., "fontes": [lista de aulas sem repetição]}
-    raise NotImplementedError("TODO 3: implemente aqui")
+    contexto = "\n\n".join(f"[{t['fonte']}] {t['texto']}" for t in trechos)
+    r = llm().chat.completions.create(
+        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        messages=[{"role": "user", "content": PROMPT.format(contexto=contexto, pergunta=pergunta)}],
+        max_tokens=400,
+    )
+    return {
+        "resposta": r.choices[0].message.content,
+        "fontes": sorted({t["fonte"] for t in trechos}),
+    }
     # -----------------------------------------------------------------------
