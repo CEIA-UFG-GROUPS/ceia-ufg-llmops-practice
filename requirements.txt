@@ -1,0 +1,5 @@
+fastapi[standard]==0.115.*
+qdrant-client==1.12.*
+fastembed==0.4.*
+openai==1.*
+pytest==8.*
